@@ -45,11 +45,16 @@ debugging, since that's what actually gets asked about in interviews.
 
 ---
 
-## [Next issue — add as it comes up]
+## No output on serial console for legacy VM
 
-**Symptom:**
-**My initial guess:**
-**Diagnostic steps:**
-**Root cause:**
-**Fix:**
-**What I'd check first next time:**
+**Symptom:** virsh console metasploitable2 connected successfully but showed a completely blank screen — no boot output, no login prompt.
+
+**My initial guess:** VM was hung or stuck mid-boot.
+
+**Diagnostic steps:** Checked virsh domstats --cpu-total twice, a few seconds apart — small nonzero CPU delta confirmed the VM was alive and idle, not crashed or looping.
+
+**Root cause:** Metasploitable2 was built for VMware and never configured to output over a serial port (ttyS0) — it only knows how to render to a legacy VGA-style display, so nothing was ever sent to the serial console we attached.
+
+**Fix:** Recreated the VM with --graphics vnc,listen=0.0.0.0 instead of the serial console, SSH-tunneled the VNC port to the Windows PC, and viewed it with TightVNC Viewer — showed the real boot screen and login prompt immediately.
+
+**What I'd check first next time:** For old/legacy disk images, default to VNC graphics rather than serial console from the start — serial only works reliably on images built with cloud-init/modern console expectations.
