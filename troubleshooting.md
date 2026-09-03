@@ -26,7 +26,7 @@ debugging, since that's what actually gets asked about in interviews.
 **What I'd check first next time:** The instinct/lesson to carry forward
 ```
 
-## [Metasploitable2 VM boots but has no network interface]
+## Metasploitable2 VM boots but has no network interface
 
 **Symptom:** VM shows running, but ip link show inside the guest only shows loopback — no eth0 at all. virsh net-dhcp-leases stays empty.
 
