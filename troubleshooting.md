@@ -28,18 +28,20 @@ debugging, since that's what actually gets asked about in interviews.
 
 ## [Metasploitable2 VM boots but has no network interface]
 
-**Symptom:** VM shows as running in virsh list --all, but inside the guest, eth0 doesn't exist at all — ip link show and ifconfig -a only show the loopback interface. virsh net-dhcp-leases isolated-lab stays empty since the guest never even attempts a DHCP request.
-**My initial guess:** Assumed it was a DHCP configuration issue inside the guest (e.g., eth0 set to manual instead of auto in /etc/network/interfaces), since that's the more common cause of "no IP" problems.
+**Symptom:** VM shows running, but ip link show inside the guest only shows loopback — no eth0 at all. virsh net-dhcp-leases stays empty.
+
+**My initial guess:** DHCP misconfiguration inside the guest (eth0 set to manual instead of auto).
+
 **Diagnostic steps:** 
 1. Confirmed the VM was actually alive and not hung using virsh domstats metasploitable2 --cpu-total, checked twice a few seconds apart — small but nonzero delta in CPU time confirmed it was up and idle, not crashed
 2. Since the default serial console (--console pty,target_type=serial) showed nothing (Metasploitable2 was never built to output over serial), set up a VNC console instead — connected via virsh vncdisplay, SSH-tunneled the port to a Windows PC, and viewed the boot process visually with TightVNC Viewer
 3. Logged in via VNC (msfadmin/msfadmin) and ran ip link show / ifconfig -a directly inside the guest — confirmed eth0 wasn't just unconfigured, it didn't exist as a device at all, ruling out a simple DHCP/config issue
 
-**Root cause:** libvirt's virt-install defaulted to emulating a modern NIC model (e1000e) for the VM's network interface. Metasploitable2's 2.6.24 kernel (released 2008) predates driver support for that NIC model, so the guest kernel never detected any network hardware at all — not a networking misconfiguration, but a driver/hardware-emulation mismatch.
+**Root cause:** virt-install defaulted to a modern NIC model (e1000e). Metasploitable2's 2008-era 2.6.24 kernel has no driver for it, so no network hardware was ever detected.
 
-**Fix:** Edited the VM's XML definition (virsh edit metasploitable2) and changed the interface's <model type='...'/> from e1000e to rtl8139 — a much older, universally-supported NIC model that this kernel has a built-in driver for. After a hard power-off (virsh destroy, since graceful virsh shutdown never completed — likely acpid isn't configured in this old image) and restart, eth0 appeared immediately and picked up a DHCP lease from isolated-lab.
+**Fix:** virsh edit metasploitable2, changed <model type='e1000e'/> to <model type='rtl8139'/> — an old, universally-supported NIC model with a built-in kernel driver. Hard-reset (virsh destroy + virsh start) and eth0 appeared immediately with a working DHCP lease.
 
-**What I'd check first next time:** When working with any old/legacy VM image, explicitly set the NIC model to something period-appropriate (rtl8139 or e1000, not e1000e or virtio) at VM creation time, rather than relying on virt-install's modern defaults — would have skipped this entire troubleshooting cycle.
+**What I'd check first next time:** For legacy VM images, explicitly set NIC model to something period-appropriate (rtl8139/e1000) at creation time instead of trusting modern defaults.
 
 ---
 
