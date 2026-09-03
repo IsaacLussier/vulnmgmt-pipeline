@@ -4,7 +4,7 @@ A home-lab project that builds a complete, working vulnerability management life
 
 ## Goal
 
-Most portfolio projects stop at "I ran a vulnerability scanner." This project goes a step further: it closes the loop. Findings are scanned, parsed into a tracker, triaged by severity, actually remediated on the target systems, and then re-scanned to confirm the fix worked. That lifecycle — not just the scan — is what a junior security analyst is actually expected to support day to day.
+To build a lightweight, functional vulnerability pipeline forwarding from intentionally vulnerable lab virtual machines. The function of our project will be to scan for vulnerabilities, parse logs and vulnerability data, log the findings, apply patches to the target machines and then rescan to confirm our changes addressed the vulnerability.
 
 ## Architecture
 
