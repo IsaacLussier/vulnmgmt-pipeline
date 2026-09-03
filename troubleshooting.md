@@ -58,3 +58,19 @@ debugging, since that's what actually gets asked about in interviews.
 **Fix:** Recreated the VM with --graphics vnc,listen=0.0.0.0 instead of the serial console, SSH-tunneled the VNC port to the Windows PC, and viewed it with TightVNC Viewer — showed the real boot screen and login prompt immediately.
 
 **What I'd check first next time:** For old/legacy disk images, default to VNC graphics rather than serial console from the start — serial only works reliably on images built with cloud-init/modern console expectations.
+
+---
+
+## Modern SSH client refuses to connect to legacy SSH server
+
+**Symptom:** ssh msfadmin@192.168.100.42 fails with Unable to negotiate... no matching host key type found. Their offer: ssh-rsa,ssh-dss.
+
+**My initial guess:** Assumed it was a networking or auth issue.
+
+**Diagnostic steps:** Error message directly named the mismatch — client and server couldn't agree on a host key algorithm.
+
+**Root cause:** Metasploitable2's ancient SSH server only supports ssh-rsa/ssh-dss host keys. Modern OpenSSH clients (Ubuntu 26.04's included) disabled ssh-rsa by default and fully removed ssh-dss support entirely, since both are considered cryptographically weak by current standards.
+
+**Fix:** Explicitly re-enabled the older algorithm for this one connection: ssh -oHostKeyAlgorithms=+ssh-rsa msfadmin@192.168.100.42.
+
+**What I'd check first next time:** When connecting to any old/legacy Linux box, expect modern SSH clients to reject outdated host key types by default — -oHostKeyAlgorithms=+ssh-rsa is a fast, standard workaround.
