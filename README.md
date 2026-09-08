@@ -116,5 +116,4 @@ finding no longer appears. Full reasoning in `DECISIONS.md`.
 - [x] GMP socket exposed to host, connection validated
 - [ ] Pipeline running end-to-end against live scan data
 - [ ] Manual remediation + rescan to validate status-closing logic
-- [ ] DVWA exploitation (pentesting component)
 - [ ] Documentation polish for portfolio presentation

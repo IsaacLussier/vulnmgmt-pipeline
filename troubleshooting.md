@@ -74,3 +74,76 @@ debugging, since that's what actually gets asked about in interviews.
 **Fix:** Explicitly re-enabled the older algorithm for this one connection: ssh -oHostKeyAlgorithms=+ssh-rsa msfadmin@192.168.100.42.
 
 **What I'd check first next time:** When connecting to any old/legacy Linux box, expect modern SSH clients to reject outdated host key types by default — -oHostKeyAlgorithms=+ssh-rsa is a fast, standard workaround.
+
+
+## Scans completing instantly with zero findings across all targets
+
+**Symptom:** 
+- All three scan tasks (DVWA, Metasploitable2-Authenticated,
+  Metasploitable2-Unauth) moved from `New` → `Done` in a matter of seconds,
+  rather than the many minutes expected for a `Full and fast` scan.
+- Every report showed `0` across every severity column (Critical, High,
+  Medium, Low, Log, False Positive) — not just an "N/A" summary tile, but
+  literal zero results on every row.
+- This was true even against Metasploitable2, a target known to be
+  extremely vulnerable — a genuinely clean scan result against that host
+  was implausible on its face.
+- No errors surfaced anywhere in the GSA UI itself; tasks reported `Done`
+  with no failure indicator, making the problem easy to miss at a glance.
+
+**My initial guess:** Feed data hadn't fully synced — GVM's gvmd logs had earlier shown "No SCAP database found" / "No CERT database found" during initial setup, so the first assumption was that the vulnerability test feed was incomplete and scans were running against an empty ruleset.
+
+**Diagnostic steps:** 
+- Confirmed the NVT feed had actually updated cleanly (`Updated NVT cache
+  from version 0 to 202609030608`) and SCAP data had copied through current
+  year CVEs — feed was not the problem.
+- Checked `docker compose ps -a` and found nine containers, including the
+  scanner engine (`openvas`) and the web UI (`gsa`), sitting in `Exited (137)`
+  — same exit code, same relative timestamp, across unrelated containers.
+  Initially suspected an OOM kill, but the real cause was simpler: the Dell
+  host had lost power (found unplugged) roughly 22 hours earlier. Docker
+  Compose's data-loader containers exit by design after copying feed data,
+  so a dead container wasn't visually distinguishable from a normal
+  "finished successfully" one at a glance — worth remembering for next time.
+- Brought the stack back up with `docker compose up -d` and confirmed
+  `openvas`/`gsa` returned to a running state.
+- Relaunched a scan. It still completed in seconds with zero results, on a
+  target (Metasploitable2) that should never scan clean. That ruled out
+  "GVM just needed a restart" as the full explanation.
+- Inspected the scanner container's actual network attachment:
+  `docker inspect <container> | grep -A20 "Networks"` showed `ospd-openvas`
+  and `openvas` both living only on the Compose-created default bridge
+  (`172.18.0.0/16`) — with zero route to `isolated-lab`/`virbr-lab`
+  (`192.168.100.0/24`), where both scan targets actually live. Docker
+  Compose creates an isolated project network by default; nothing in the
+  original setup had ever explicitly attached the scanner containers to the
+  lab network. Confirmed via `/proc/net/route` inside the container: only a
+  default route out the Compose bridge, nothing pointing at `.100.0/24`.
+
+**Root cause:** Two independent problems stacked on top of each other:
+1. The scanner containers were never network-connected to `isolated-lab`
+     in the first place — a gap from initial setup, not something that
+     broke later.
+2. Separately, the Metasploitable2 VM had not survived a power outage —
+     `virsh list --all` showed it `shut off`, meaning even a correctly
+     networked scanner would have had nothing to reach against that
+     specific target. (DVWA, running as a Docker container rather than a
+     VM, had also silently died in the same outage and needed its own
+     restart — it just hadn't been checked yet at that point.)
+
+**Fix:** 
+  - Attached both scanner containers to the same macvlan network already
+    built for DVWA, giving them real interfaces on `192.168.100.0/24`:
+    `docker network connect --ip 192.168.100.50 isolated-lab-macvlan
+    ospd-openvas` (and the same for `openvas` on `.51`).
+  - Restarted the Metasploitable2 VM: `virsh start metasploitable2`.
+  - Restarted DVWA and set a persistent restart policy so a future power
+    event doesn't silently take it down again:
+    `docker start dvwa && docker update --restart unless-stopped dvwa`.
+  - Confirmed the fix with a live packet capture on the target-side network
+    (`tcpdump` on `virbr-lab`) while re-triggering a scan, and watched
+    traffic actually arrive from the new scanner IPs — rather than trusting
+    the GSA UI alone, since it had already reported false "success" once.
+
+**What I'd check first next time:** A scan that finishes in a few seconds with zero
+findings against a target known to be vulnerable is never a clean result. Treat it as a signal the scan never actually reached the target, not as "nothing was found."
