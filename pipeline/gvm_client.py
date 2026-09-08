@@ -16,7 +16,7 @@ from gvm.connections import UnixSocketConnection
 from gvm.protocols.gmp import Gmp
 from gvm.transforms import EtreeTransform
 
-import config
+from . import config
 
 
 def fetch_all_reports() -> List[Tuple[str, ET.Element]]:

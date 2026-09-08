@@ -12,10 +12,10 @@ Run with:
 
 import sys
 
-import config
-import db
-from gvm_client import fetch_all_reports
-from parser import parse_report, hosts_in_report
+from . import config
+from . import db
+from .gvm_client import fetch_all_reports
+from .parser import parse_report, hosts_in_report
 
 
 def run():
