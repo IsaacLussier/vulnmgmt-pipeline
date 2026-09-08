@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS ingested_reports (
     task_name TEXT,
     ingested_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pipeline_state (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -69,6 +74,23 @@ def mark_ingested(conn: sqlite3.Connection, report_id: str, task_name: str):
         "INSERT OR REPLACE INTO ingested_reports (report_id, task_name, ingested_at) "
         "VALUES (?, ?, ?)",
         (report_id, task_name, datetime.now(timezone.utc).isoformat()),
+    )
+
+def get_last_run(conn: sqlite3.Connection) -> str | None:
+    """Returns the ISO8601 timestamp of the last successful pipeline run,
+    or None if this is the first run ever."""
+    row = conn.execute(
+        "SELECT value FROM pipeline_state WHERE key = 'last_run'"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def set_last_run(conn: sqlite3.Connection, timestamp: str):
+    """Records the current run's start time, so the NEXT run can ask
+    gvmd for only reports created after this point."""
+    conn.execute(
+        "INSERT OR REPLACE INTO pipeline_state (key, value) VALUES ('last_run', ?)",
+        (timestamp,),
     )
 
 

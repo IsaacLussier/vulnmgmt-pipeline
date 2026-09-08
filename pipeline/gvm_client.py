@@ -19,13 +19,20 @@ from gvm.transforms import EtreeTransform
 from . import config
 
 
-def fetch_all_reports() -> List[Tuple[str, ET.Element]]:
+def fetch_all_reports(since: str | None = None) -> List[Tuple[str, ET.Element]]:
     """
     Returns a list of (report_id, inner_report_element) tuples for every
-    completed report gvmd knows about. The "inner report element" is the
-    one parser.py expects - see the unwrapping below, since GMP nests
-    <report><report>...</report></report>.
+    completed report gvmd knows about - full result sets, not the
+    10-row-capped default a report remembers from its last GSA view.
+
+    since: optional ISO8601 timestamp string. If given, only reports
+    created after this time are fetched at all (cheaper than pulling
+    full history every run). Pass db.get_last_run(conn) here.
     """
+    list_filter = "apply_overrides=0 rows=-1"
+    if since:
+        list_filter += f" created>{since}"
+
     connection = UnixSocketConnection(path=config.GVM_SOCKET_PATH)
     transform = EtreeTransform()
 
@@ -33,13 +40,31 @@ def fetch_all_reports() -> List[Tuple[str, ET.Element]]:
     with Gmp(connection, transform=transform) as gmp:
         gmp.authenticate(config.GVM_USERNAME, config.GVM_PASSWORD)
 
-        # details=True is what actually populates <results> - without it
-        # you get report metadata with no findings, which looks like a
-        # parser bug but isn't.
-        response = gmp.get_reports(details=True)
+        # First: list which reports exist (this call's own filter doesn't
+        # need to touch min_qod - it's just picking WHICH reports to look
+        # at, not filtering their contents).
+        listing = gmp.get_reports(filter_string=list_filter)
 
-        for outer_report in response.findall("report"):
-            report_id = outer_report.get("id", "")
+        report_ids = [
+            outer.get("id", "")
+            for outer in listing.findall("report")
+            if outer.get("id")
+        ]
+
+        # Then: pull each report's FULL result set individually. This is
+        # the step that actually needs min_qod=0 and rows=-1 - confirmed
+        # via gvm-cli that get_reports(details=True) alone silently
+        # respects a report's last-viewed filter (often rows=10) unless
+        # you override it explicitly per report.
+        for report_id in report_ids:
+            full = gmp.get_report(
+                report_id=report_id,
+                filter_string="apply_overrides=0 min_qod=0 rows=-1",
+                details=True,
+            )
+            outer_report = full.find("report")
+            if outer_report is None:
+                continue
             inner_report = outer_report.find("report")
             if inner_report is None:
                 continue
