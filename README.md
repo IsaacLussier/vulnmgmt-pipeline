@@ -1,90 +1,120 @@
-# Vulnerability Management Mini-Pipeline
+# vulnmgmt-pipeline
 
-A home-lab project that builds a complete, working vulnerability management lifecycle — scan, ingest, track, remediate, rescan — using open-source tools and a Python automation layer.
+A vulnerability management pipeline built to demonstrate skills for a Junior
+Security Analyst role: scan orchestration with Greenbone/GVM, Python
+automation of the vulnerability lifecycle, and (upcoming) hands-on web
+application pentesting fundamentals against DVWA.
 
-## Goal
-
-To build a lightweight, functional vulnerability pipeline forwarding from intentionally vulnerable lab virtual machines. The function of our project will be to scan for vulnerabilities, parse logs and vulnerability data, log the findings, apply patches to the target machines and then rescan to confirm our changes addressed the vulnerability.
+This is a self-directed lab project — not an assignment — built to freshen
+up on Python and get hands-on with a real vulnerability management workflow
+end to end: scan → parse → track → remediate → rescan.
 
 ## Architecture
 
-*(Diagram goes here — sketch the lab topology in draw.io/excalidraw and embed the PNG.)*
-
-- **Host:** Dell Ubuntu Server, running KVM/libvirt for virtualization
-- **Scanner:** Greenbone/OpenVAS Community Edition (VM)
-- **Vulnerable targets:**
-  - Metasploitable2 (VM) — intentionally vulnerable Linux host
-  - DVWA (Docker container) — intentionally vulnerable web application
-- **Attacker/analyst workstation:** ThinkPad running Kali Linux (VM), used for manual pentesting and running scans
-- **Network:** All lab VMs isolated on an internal virtual network, not bridged to the home LAN
-
-## What this project demonstrates
-
-- **Vulnerability management lifecycle** — identifying, tracking, and remediating findings end to end, not just a one-time scan
-- **Python automation of security tasks** — a script that parses raw scanner output (XML) and loads it into a structured tracker
-- **Log/report analysis** — reading and interpreting scanner and system output to prioritize real risk
-- **Basic web application security fundamentals** — hands-on exploitation of SQL injection, XSS, and CSRF in a safe, isolated environment
-- **Practical Linux systems administration** — including troubleshooting real infrastructure issues along the way (see Lessons Learned)
-
-## Tools used
-
-| Purpose | Tool |
-|---|---|
-| Hypervisor | KVM / libvirt |
-| Vulnerability scanner | Greenbone (OpenVAS) Community Edition |
-| Vulnerable Linux target | Metasploitable2 |
-| Vulnerable web app | DVWA (Docker) |
-| Pentesting toolkit | Kali Linux |
-| Automation / parsing | Python 3 |
-| Tracking | SQLite |
-
-## Repository structure
-
 ```
 vulnmgmt-pipeline/
-├── README.md
-├── LICENSE
+├── pipeline/
+│   ├── __init__.py
+│   ├── config.py        # env-var based settings, no secrets in code
+│   ├── gvm_client.py     # GMP connection + report retrieval
+│   ├── parser.py         # raw GMP XML -> structured Finding records
+│   ├── db.py              # SQLite schema + Open/In Progress/Remediated logic
+│   └── main.py            # orchestration: fetch -> parse -> sync to DB
+├── tests/
+│   └── fixtures/
+│       └── test_fixture.xml   # synthetic GMP report for testing parser.py
 ├── requirements.txt
-├── scripts/
-│   └── ingest_findings.py      # Parses OpenVAS export, loads into tracker
-├── docs/
-│   ├── architecture-diagram.png
-│   └── screenshots/
-│       ├── scan-results.png
-│       ├── tracker-before.png
-│       ├── tracker-after.png
-│       └── dvwa-sqli.png
-└── writeups/
-    └── dvwa-manual-pentest.md   # Notes on SQLi/XSS/CSRF exercises
+├── .gitignore
+├── DECISIONS.md
+├── TROUBLESHOOTING.md
+└── README.md
 ```
 
-## How it works
+## Lab infrastructure
 
-1. OpenVAS scans the two target systems (Metasploitable2, DVWA)
-2. Scan results are exported as XML
-3. `ingest_findings.py` parses the export, extracts CVE/CVSS/severity, dedupes entries, and loads them into a SQLite tracker with status: `Open` → `In Progress` → `Remediated`
-4. Selected findings are manually remediated on the target systems
-5. A rescan confirms the fix, and the tracker is updated to reflect the new status
+- **Lab host**: headless Dell Ubuntu Server, KVM/libvirt for VM targets,
+  Docker Compose for the GVM stack.
+- **Isolated scan network**: `isolated-lab` / `virbr-lab`, `192.168.100.0/24`
+  — no route to the home LAN or internet, by design.
+- **Targets**: Metasploitable2 (KVM VM, `.42`) and DVWA (Docker container via
+  macvlan, `.43`).
+- **Scanner**: Greenbone Community Edition (GVM), deployed via Docker
+  Compose, started on-demand rather than run continuously.
 
-## Results
+## Connecting to GVM (GMP over Unix socket)
 
-*(Fill in once complete — e.g. "Initial scan surfaced X findings across Y severity levels. Y of them were remediated and confirmed via rescan.")*
+By default, the official GVM Docker Compose stack keeps `gvmd.sock` inside a
+Docker-managed volume, not reachable from the host. To let this pipeline
+connect via `python-gvm`, `gvmd_socket_vol` in `compose.yaml` is bind-mounted
+to a host path instead:
 
-## Lessons learned
+```yaml
+volumes:
+  gvmd_socket_vol:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/labuntuadmin/gvm-stack/sockets/gvmd
+```
 
-- Diagnosed a flapping physical network link (cable/port issue on the lab host) using `networkctl status` and `journalctl -u systemd-networkd` rather than assuming a config problem — netplan's DHCP config was correct the whole time; the issue was physical layer.
-- *(Add more as you go — e.g. XML parsing quirks, OpenVAS feed sync issues, Docker/libvirt bridging notes.)*
-
-## Setup / reproduction
+Verify the socket is reachable before touching Python, using `gvm-cli`:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the ingestion script against an OpenVAS export
-python3 scripts/ingest_findings.py --input scan_export.xml --db tracker.db
+gvm-cli socket --socketpath ~/gvm-stack/sockets/gvmd/gvmd.sock --pretty --xml "<get_version/>"
 ```
 
-## License
+## Setup
 
-MIT — see [LICENSE](LICENSE) for details.
+```bash
+pip install --break-system-packages -r requirements.txt
+```
+
+`requirements.txt` pins `python-gvm>=26.2.1` — earlier versions reject GMP
+22.7, which is what this gvmd install reports.
+
+## Running the pipeline
+
+Three environment variables are required. **Never commit real values** —
+this repo's `.gitignore` excludes `notes/`, which is where actual
+credentials and paths live locally, not here:
+
+- `GVM_SOCKET_PATH` — path to the gvmd Unix socket on this host
+- `GVM_USERNAME` — GMP username
+- `GVM_PASSWORD` — GMP password
+
+```bash
+export GVM_SOCKET_PATH=/home/labuntuadmin/gvm-stack/sockets/gvmd/gvmd.sock
+export GVM_USERNAME=<your-username>
+export GVM_PASSWORD=<your-password>
+
+cd ~/vulnmgmt-pipeline
+python3 -m pipeline.main
+```
+
+(Or `source notes/set-env.sh` if you've saved these locally per the pattern
+above, instead of re-typing the exports each session.)
+
+This connects to gvmd over GMP, pulls every completed report, parses results
+into `Finding` records, and syncs them into a local SQLite tracker
+(`vulnmgmt.db`, gitignored) with `Open` / `In Progress` / `Remediated`
+status tracking.
+
+## Design notes
+
+A finding's identity is `(nvt_oid, host, port)` — not which scan task found
+it. The same vulnerable service flagged by both an authenticated and
+unauthenticated scan of the same host is tracked as one row, not two.
+`In Progress` is a manual status the ingestion logic never overwrites; a
+finding only flips to `Remediated` when its host is rescanned and the
+finding no longer appears. Full reasoning in `DECISIONS.md`.
+
+## Status
+
+- [x] Lab infrastructure (isolated network, Metasploitable2, DVWA)
+- [x] GVM scanner deployed, initial scans run against both targets
+- [x] GMP socket exposed to host, connection validated
+- [ ] Pipeline running end-to-end against live scan data
+- [ ] Manual remediation + rescan to validate status-closing logic
+- [ ] DVWA exploitation (pentesting component)
+- [ ] Documentation polish for portfolio presentation
