@@ -57,12 +57,16 @@ CREATE TABLE IF NOT EXISTS pipeline_state (
 
 
 def connect(db_path: str) -> sqlite3.Connection:
+    # Opens (or creates, if it doesn't exist yet) the SQLite file, then makes
+    # sure all three tables above exist before handing back the connection.
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
     return conn
 
 
 def already_ingested(conn: sqlite3.Connection, report_id: str) -> bool:
+    # True if we already have a row for this report_id, meaning we've
+    # processed it before and should skip it this run.
     row = conn.execute(
         "SELECT 1 FROM ingested_reports WHERE report_id = ?", (report_id,)
     ).fetchone()
@@ -70,6 +74,8 @@ def already_ingested(conn: sqlite3.Connection, report_id: str) -> bool:
 
 
 def mark_ingested(conn: sqlite3.Connection, report_id: str, task_name: str):
+    # Records that this report has now been processed, so a future run
+    # (or a rerun of this one) won't ingest it a second time.
     conn.execute(
         "INSERT OR REPLACE INTO ingested_reports (report_id, task_name, ingested_at) "
         "VALUES (?, ?, ?)",
@@ -102,12 +108,15 @@ def upsert_findings(conn: sqlite3.Connection, findings: Iterable[Finding]):
     now = datetime.now(timezone.utc).isoformat()
 
     for f in findings:
+        # Step 1: check if we already have a row for this exact
+        # vulnerability + host + port combo.
         existing = conn.execute(
             "SELECT id, status FROM findings WHERE nvt_oid = ? AND host = ? AND port = ?",
             (f.nvt_oid, f.host, f.port),
         ).fetchone()
 
         if existing is None:
+            # Step 2a: never seen before - insert it as a brand-new Open finding.
             conn.execute(
                 """INSERT INTO findings
                    (nvt_oid, host, port, name, severity, threat, description,
@@ -117,6 +126,9 @@ def upsert_findings(conn: sqlite3.Connection, findings: Iterable[Finding]):
                  f.description, f.task_name, f.report_id, now, now),
             )
         else:
+            # Step 2b: already tracked - update it, and if it had been marked
+            # Remediated, flip it back to Open since the scanner just found it
+            # again. Any other status (Open, In Progress) is left alone.
             finding_id, status = existing
             new_status = "Open" if status == "Remediated" else status
             conn.execute(
@@ -137,14 +149,19 @@ def close_out_missing_findings(conn: sqlite3.Connection, host: str,
     the report you just ingested - see hosts_in_report() in parser.py."""
     now = datetime.now(timezone.utc).isoformat()
 
+    # Step 1: get every finding for this host that isn't already Remediated.
     rows = conn.execute(
         "SELECT id, nvt_oid, port, status FROM findings WHERE host = ? AND status != 'Remediated'",
         (host,),
     ).fetchall()
 
     for finding_id, nvt_oid, port, status in rows:
+        # Step 2: don't touch anything a human marked "In Progress" - that's
+        # a manual status this script should never override.
         if status == "In Progress":
             continue
+        # Step 3: if this old finding didn't show up in the report we just
+        # ingested, the rescan didn't find it anymore - mark it Remediated.
         if (nvt_oid, port) not in seen_nvt_oids_ports:
             conn.execute(
                 "UPDATE findings SET status = 'Remediated', last_seen = ? WHERE id = ?",

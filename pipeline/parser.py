@@ -54,26 +54,35 @@ def parse_report(report_elem: ET.Element, report_id: str) -> List[Finding]:
     report_id: the report's UUID, passed in separately since the id lives
                as an attribute on the outer envelope, not this element.
     """
+    # Step 1: grab the report-level info that applies to every finding in it -
+    # which scan task this came from, and when the scan finished.
     task_name = _text(report_elem, "task/name", default="unknown-task")
     report_date = _text(report_elem, "scan_end", default="")
 
     findings = []
+    # Step 2: walk every individual <result> (one vulnerability hit) in the report.
     for result in report_elem.findall("results/result"):
+        # Step 3: pull the basic fields straight out of the XML as plain text.
         name = _text(result, "name")
         host = _text(result, "host")
         port = _text(result, "port", default="general/tcp")
         threat = _text(result, "threat", default="Log")
         description = _text(result, "description")
 
+        # Step 4: severity is a number (CVSS score) but arrives as text, and
+        # can be missing entirely on informational results - default to 0.0.
         severity_text = _text(result, "severity", default="0.0")
         try:
             severity = float(severity_text)
         except ValueError:
             severity = 0.0
 
+        # Step 5: the vulnerability's unique ID (NVT OID) lives as an XML
+        # attribute on a nested <nvt> tag, not as normal text content.
         nvt_elem = result.find("nvt")
         nvt_oid = nvt_elem.get("oid", "") if nvt_elem is not None else ""
 
+        # Step 6: package everything up into one clean Finding record.
         findings.append(Finding(
             nvt_oid=nvt_oid,
             host=host,
