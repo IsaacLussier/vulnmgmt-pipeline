@@ -26,8 +26,11 @@ def run():
 
     conn = db.connect(config.DB_PATH)
 
+    run_started_at = datetime.now(timezone.utc).isoformat()
+    last_run = db.get_last_run(conn)
+
     print(f"Connecting to gvmd via {config.GVM_SOCKET_PATH} ...")
-    reports = fetch_all_reports()
+    reports = fetch_all_reports(since=last_run)
     print(f"Found {len(reports)} report(s).")
 
     new_count = 0
@@ -54,6 +57,7 @@ def run():
     for status, count in db.summary(conn):
         print(f"  {status}: {count}")
 
+    db.set_last_run(conn, run_started_at)
     conn.close()
 
 
