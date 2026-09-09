@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS findings (
     port TEXT NOT NULL,
     name TEXT NOT NULL,
     severity REAL NOT NULL,
+    qod REAL NOT NULL DEFAULT 0,
     threat TEXT NOT NULL,
     description TEXT,
     status TEXT NOT NULL DEFAULT 'Open',
@@ -119,12 +120,11 @@ def upsert_findings(conn: sqlite3.Connection, findings: Iterable[Finding]):
             # Step 2a: never seen before - insert it as a brand-new Open finding.
             conn.execute(
                 """INSERT INTO findings
-                   (nvt_oid, host, port, name, severity, threat, description,
+                    (nvt_oid, host, port, name, severity, qod, threat, description,
                     status, task_name, report_id, first_seen, last_seen)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'Open', ?, ?, ?, ?)""",
-                (f.nvt_oid, f.host, f.port, f.name, f.severity, f.threat,
-                 f.description, f.task_name, f.report_id, now, now),
-            )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Open', ?, ?, ?, ?)""",
+                (f.nvt_oid, f.host, f.port, f.name, f.severity, f.qod, f.threat, f.description, f.task_name, f.report_id, now, now),
+)
         else:
             # Step 2b: already tracked - update it, and if it had been marked
             # Remediated, flip it back to Open since the scanner just found it
@@ -134,12 +134,25 @@ def upsert_findings(conn: sqlite3.Connection, findings: Iterable[Finding]):
             conn.execute(
                 """UPDATE findings
                    SET last_seen = ?, task_name = ?, report_id = ?,
-                       severity = ?, threat = ?, status = ?
+                       severity = ?, qod = ?, threat = ?, status = ?
                    WHERE id = ?""",
-                (now, f.task_name, f.report_id, f.severity, f.threat,
+                (now, f.task_name, f.report_id, f.severity, f.qod, f.threat,
                  new_status, finding_id),
             )
 
+def get_findings(conn: sqlite3.Connection, task_name: str | None = None,
+                  sort_by: str = "severity") -> list:
+    "Whitelist the sort column to avoid SQL injection, then return all findings optionally filtered by task_name."
+    sort_column = {"severity": "severity", "qod": "qod"}.get(sort_by, "severity")
+
+    query = "SELECT name, host, port, severity, qod, threat, status, task_name FROM findings"
+    params: tuple = ()
+    if task_name:
+        query += " WHERE task_name = ?"
+        params = (task_name,)
+    query += f" ORDER BY {sort_column} DESC"
+
+    return conn.execute(query, params).fetchall()
 
 def close_out_missing_findings(conn: sqlite3.Connection, host: str,
                                  seen_nvt_oids_ports: set):

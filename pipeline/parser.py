@@ -32,6 +32,7 @@ class Finding:
     port: str
     name: str
     severity: float
+    qod: float
     threat: str
     description: str
     task_name: str
@@ -77,6 +78,12 @@ def parse_report(report_elem: ET.Element, report_id: str) -> List[Finding]:
         except ValueError:
             severity = 0.0
 
+        qod_text = _text(result, "qod/value", default="0")
+        try:
+            qod = float(qod_text)
+        except ValueError:
+            qod = 0.0
+
         # Step 5: the vulnerability's unique ID (NVT OID) lives as an XML
         # attribute on a nested <nvt> tag, not as normal text content.
         nvt_elem = result.find("nvt")
@@ -89,6 +96,7 @@ def parse_report(report_elem: ET.Element, report_id: str) -> List[Finding]:
             port=port,
             name=name,
             severity=severity,
+            qod=qod,
             threat=threat,
             description=description,
             task_name=task_name,
