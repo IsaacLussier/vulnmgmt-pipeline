@@ -147,3 +147,17 @@ debugging, since that's what actually gets asked about in interviews.
 
 **What I'd check first next time:** A scan that finishes in a few seconds with zero
 findings against a target known to be vulnerable is never a clean result. Treat it as a signal the scan never actually reached the target, not as "nothing was found."
+
+
+
+##  Corrupted status/description from misaligned INSERT
+
+**Symptom:** Pipeline ran clean (exit 0), but report command printed raw scan text instead of status words.
+
+**Guesses that were wrong:** stray debug print, terminal scrollback, shadowed import. Ruled all out with grep and a direct file redirect.
+
+**Root cause:** upsert_findings()'s INSERT had 13 columns but only 12 ? placeholders - 'Open' was hardcoded in the middle of VALUES, pushing every value after it one column late. description's text landed in status; no error, since both are TEXT.
+
+**Fix:** Added the missing ? before 'Open'. Had to delete and rebuild vulnmgmt.db since existing rows were already corrupted.
+
+**Lesson:** Count placeholders against columns when mixing literals into VALUES - or just parameterize everything, always. Clean exit code ≠ correct data; caught this via a second read path (report), not an error.
