@@ -1,15 +1,23 @@
 """
-Entry point: pull every completed report from gvmd, parse it, and sync
-the findings into the SQLite tracker, applying Open/In Progress/
-Remediated status transitions along the way.
+Entry point for the vulnerability management pipeline.
 
-Run with:
+Two commands:
+    python3 -m pipeline.main ingest    (or no command - this is the default)
+        Pull new completed reports from gvmd, parse them, and sync findings
+        into the SQLite tracker, applying Open/In Progress/Remediated
+        status transitions along the way.
+
+    python3 -m pipeline.main report [--task "DVWA"] [--sort severity|qod]
+        Display currently tracked findings from the local database,
+        optionally filtered to one task and sorted by severity or QoD.
+
+Setup (before either command):
     export GVM_SOCKET_PATH=/home/labuntuadmin/gvm-stack/sockets/gvmd/gvmd.sock
     export GVM_USERNAME=admin
     export GVM_PASSWORD=admin
-    python3 main.py
 """
 
+import argparse
 import sys
 from datetime import datetime, timezone
 
@@ -34,15 +42,22 @@ def run():
     run_started_at = datetime.now(timezone.utc).isoformat()
     last_run = db.get_last_run(conn)
 
+    if last_run:
+        print(f"Last successful run: {last_run}")
+        print("Asking gvmd for reports created since then ...")
+    else:
+        print("No previous run recorded - pulling full report history.")
+
     # Step 4: ask gvmd (the scanner) for every completed report since last time.
-    print(f"Connecting to gvmd via {config.GVM_SOCKET_PATH} ...")
     reports = fetch_all_reports(since=last_run)
-    print(f"Found {len(reports)} report(s).")
+    print(f"gvmd returned {len(reports)} report(s) to check.")
 
     new_count = 0
+    skipped_count = 0
     for report_id, report_elem in reports:
         # Step 5: skip reports we've already processed in a previous run.
         if db.already_ingested(conn, report_id):
+            skipped_count += 1
             continue
 
         # Step 6: turn this report's raw XML into a simple list of Finding objects.
@@ -67,7 +82,7 @@ def run():
         conn.commit()
 
     # Step 10: print a quick summary of how many findings are in each status.
-    print(f"\n{new_count} new report(s) ingested.")
+    print(f"\n{new_count} new report(s) ingested, {skipped_count} already up to date.")
     print("Status summary:")
     for status, count in db.summary(conn):
         print(f"  {status}: {count}")
@@ -78,5 +93,38 @@ def run():
     conn.close()
 
 
+def print_report(conn, task_name=None, sort_by="severity"):
+    """Display currently tracked findings, optionally filtered to one task."""
+    rows = db.get_findings(conn, task_name=task_name, sort_by=sort_by)
+    if not rows:
+        print("No findings match.")
+        return
+
+    print(f"{'Severity':>8}  {'QoD':>4}  {'Threat':<10} {'Status':<12} {'Task':<28} {'Host':<15} {'Port':<12} Name")
+    for name, host, port, severity, qod, threat, status, task in rows:
+        print(f"{severity:>8.1f}  {qod:>3.0f}%  {threat:<10} {status:<12} {task:<28} {host:<15} {port:<12} {name}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Vulnerability management pipeline")
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser("ingest", help="Fetch and ingest new reports from gvmd (default)")
+
+    report_parser = subparsers.add_parser("report", help="Display tracked findings")
+    report_parser.add_argument("--task", help="Filter to one task, e.g. 'DVWA'")
+    report_parser.add_argument("--sort", choices=["severity", "qod"], default="severity",
+                                help="Sort by severity or QoD (default: severity)")
+
+    args = parser.parse_args()
+
+    if args.command == "report":
+        conn = db.connect(config.DB_PATH)
+        print_report(conn, task_name=args.task, sort_by=args.sort)
+        conn.close()
+    else:
+        run()
+
+
 if __name__ == "__main__":
-    run()
+    main()

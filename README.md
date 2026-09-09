@@ -109,11 +109,36 @@ unauthenticated scan of the same host is tracked as one row, not two.
 finding only flips to `Remediated` when its host is rescanned and the
 finding no longer appears. Full reasoning in `DECISIONS.md`.
 
+## Usage reference
+
+Run `python3 -m pipeline.main --help` or `python3 -m pipeline.main report --help`
+for full usage at any time.
+
+| Command | What it does |
+|---|---|
+| `python3 -m pipeline.main` | Fetch new completed reports from gvmd and sync findings into the tracker. Default command if none given. |
+| `python3 -m pipeline.main ingest` | Same as above, explicit. |
+| `python3 -m pipeline.main report` | Display all currently tracked findings. |
+
+### `report` options
+
+| Flag | Values | Default | Description |
+|---|---|---|---|
+| `--task` | any task name, e.g. `DVWA` | none (all tasks) | Filter to one scan task. Must match exactly - check real names with `sqlite3 vulnmgmt.db "SELECT DISTINCT task_name FROM findings;"` |
+| `--sort` | `severity`, `qod` | `severity` | Sort output by CVSS severity or Quality of Detection |
+
+### Examples
+
+    python3 -m pipeline.main report
+    python3 -m pipeline.main report --task DVWA
+    python3 -m pipeline.main report --sort qod
+    python3 -m pipeline.main report --task "Metasploitable2-Auth" --sort qod
+
 ## Status
 
 - [x] Lab infrastructure (isolated network, Metasploitable2, DVWA)
 - [x] GVM scanner deployed, initial scans run against both targets
 - [x] GMP socket exposed to host, connection validated
-- [ ] Pipeline running end-to-end against live scan data
+- [x] Pipeline running end-to-end against live scan data
 - [ ] Manual remediation + rescan to validate status-closing logic
 - [ ] Documentation polish for portfolio presentation
